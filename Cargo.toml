@@ -1,12 +1,13 @@
 [package]
-name = "bytes_js"
+name = "bytes-rs"
 version = "3.1.2"
 edition = "2021"
-description = "High-performance Rust port of visionmedia/bytes.js - Utility to parse string bytes to bytes and vice-versa"
+description = "High-performance Rust utility to parse string bytes to bytes and vice-versa"
 license = "MIT"
-repository = "https://github.com/visionmedia/bytes.js"
+repository = "https://github.com/grvchnx/bytes-rs"
 
 [lib]
+name = "bytes_rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]

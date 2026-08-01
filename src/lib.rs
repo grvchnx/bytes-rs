@@ -1,11 +1,8 @@
 /*!
- * bytes.rs
- * High-performance Rust port of visionmedia/bytes.js
- * Copyright(c) 2012-2014 TJ Holowaychuk
- * Copyright(c) 2015 Jed Watson
+ * bytes-rs
+ * High-performance Rust port of bytes utility
+ * https://github.com/grvchnx/bytes-rs
  * MIT Licensed
- *
- * Original repository: https://github.com/visionmedia/bytes.js
  */
 
 #![forbid(unsafe_code)]
