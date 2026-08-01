@@ -1,20 +1,23 @@
 [package]
-name = "bytes-rs"
+name = "bytes_rs"
 version = "3.1.2"
 edition = "2021"
-description = "High-performance Rust utility to parse string bytes to bytes and vice-versa"
+authors = ["Antigravity Team"]
+description = "Utility to parse a string bytes to bytes and vice-versa (Rust port)"
 license = "MIT"
-repository = "https://github.com/grvchnx/bytes-rs"
 
 [lib]
 name = "bytes_rs"
 crate-type = ["cdylib", "rlib"]
 
-[dependencies]
-napi = { version = "2.16.12", default-features = false, features = ["napi4"] }
-napi-derive = "2.16.12"
-regex = "1.13.1"
-once_cell = "1.21.4"
+[features]
+default = ["napi-bindings"]
+napi-bindings = ["dep:napi", "dep:napi-derive"]
 
-[build-dependencies]
-napi-build = "2.1.3"
+[dependencies]
+napi = { version = "2.16", default-features = false, features = ["napi4"], optional = true }
+napi-derive = { version = "2.16", optional = true }
+regex = "1.10"
+
+[dev-dependencies]
+proptest = "1.4"

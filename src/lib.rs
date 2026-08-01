@@ -1,30 +1,95 @@
-/*!
- * bytes-rs
- * High-performance Rust port of bytes utility
- * https://github.com/grvchnx/bytes-rs
- * MIT Licensed
- */
-
 #![forbid(unsafe_code)]
 
-use napi::bindgen_prelude::*;
-use napi_derive::napi;
-use once_cell::sync::Lazy;
 use regex::Regex;
+use std::sync::OnceLock;
 
-const B: f64 = 1.0;
-const KB: f64 = 1024.0;
-const MB: f64 = 1048576.0; // 1024^2
-const GB: f64 = 1073741824.0; // 1024^3
-const TB: f64 = 1099511627776.0; // 1024^4
-const PB: f64 = 1125899906842624.0; // 1024^5
+#[cfg(feature = "napi-bindings")]
+use napi::bindgen_prelude::*;
+#[cfg(feature = "napi-bindings")]
+use napi_derive::napi;
 
-static PARSE_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)^((-|\+)?(\d+(?:\.\d+)?))\s*(kb|mb|gb|tb|pb)$").unwrap()
-});
+static PARSE_REGEXP: OnceLock<Regex> = OnceLock::new();
+static FORMAT_DECIMALS_REGEXP: OnceLock<Regex> = OnceLock::new();
 
-#[derive(Default)]
-#[napi(object)]
+const MAP_B: f64 = 1.0;
+const MAP_KB: f64 = 1024.0;
+const MAP_MB: f64 = 1048576.0;
+const MAP_GB: f64 = 1073741824.0;
+const MAP_TB: f64 = 1099511627776.0;
+const MAP_PB: f64 = 1125899906842624.0;
+
+fn get_unit_map_entry(unit: &str) -> Option<(&'static str, f64)> {
+    match unit.to_lowercase().as_str() {
+        "b" => Some(("b", MAP_B)),
+        "kb" => Some(("kb", MAP_KB)),
+        "mb" => Some(("mb", MAP_MB)),
+        "gb" => Some(("gb", MAP_GB)),
+        "tb" => Some(("tb", MAP_TB)),
+        "pb" => Some(("pb", MAP_PB)),
+        _ => None,
+    }
+}
+
+/// JS parseInt(val, 10) behavior when parseRegExp does not match.
+fn js_parse_int_10(s: &str) -> Option<f64> {
+    let trimmed = s.trim_start();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut chars = trimmed.char_indices().peekable();
+    let mut sign = 1.0;
+    if let Some((_, c)) = chars.peek() {
+        if *c == '-' {
+            sign = -1.0;
+            chars.next();
+        } else if *c == '+' {
+            chars.next();
+        }
+    }
+    let mut digits_found = false;
+    let mut val: f64 = 0.0;
+    for (_, c) in chars {
+        if let Some(digit) = c.to_digit(10) {
+            digits_found = true;
+            val = val * 10.0 + digit as f64;
+        } else {
+            break;
+        }
+    }
+    if digits_found {
+        Some(sign * val)
+    } else {
+        None
+    }
+}
+
+/// Parse raw number into bytes count.
+pub fn parse_number(val: f64) -> Option<f64> {
+    if val.is_nan() {
+        None
+    } else {
+        Some(val)
+    }
+}
+
+/// Parse string into bytes count.
+pub fn parse_string(val: &str) -> Option<f64> {
+    let re = PARSE_REGEXP.get_or_init(|| {
+        Regex::new(r"(?i)^((-|\+)?(\d+(?:\.\d+)?)) *(kb|mb|gb|tb|pb)$").unwrap()
+    });
+
+    if let Some(caps) = re.captures(val) {
+        let float_val: f64 = caps.get(1)?.as_str().parse().ok()?;
+        let unit_str = caps.get(4)?.as_str();
+        let (_, multiplier) = get_unit_map_entry(unit_str)?;
+        Some((multiplier * float_val).floor())
+    } else {
+        let float_val = js_parse_int_10(val)?;
+        Some((MAP_B * float_val).floor())
+    }
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct FormatOptions {
     pub decimal_places: Option<u32>,
     pub fixed_decimals: Option<bool>,
@@ -33,334 +98,189 @@ pub struct FormatOptions {
     pub unit_separator: Option<String>,
 }
 
-fn js_parse_int(s: &str) -> Option<f64> {
-    let trimmed = s.trim_start();
-    let mut chars = trimmed.chars().peekable();
-
-    let mut is_neg = false;
-    if let Some(&c) = chars.peek() {
-        if c == '-' {
-            is_neg = true;
-            chars.next();
-        } else if c == '+' {
-            chars.next();
-        }
+fn apply_thousands_separator(s: &str, sep: &str) -> String {
+    if sep.is_empty() {
+        return s.to_string();
     }
+    let parts: Vec<&str> = s.split('.').collect();
+    let int_part = parts[0];
 
-    let mut num_str = String::new();
-    while let Some(&c) = chars.peek() {
-        if c.is_ascii_digit() {
-            num_str.push(c);
-            chars.next();
-        } else {
-            break;
-        }
-    }
-
-    if num_str.is_empty() {
-        return None;
-    }
-
-    let val: f64 = num_str.parse().ok()?;
-    if is_neg {
-        Some(-val)
+    let (prefix, digits) = if let Some(stripped) = int_part.strip_prefix('-') {
+        ("-", stripped)
+    } else if let Some(stripped) = int_part.strip_prefix('+') {
+        ("+", stripped)
     } else {
-        Some(val)
-    }
-}
-
-fn format_thousands(int_part: &str, sep: &str) -> String {
-    let (is_neg, digits) = if let Some(stripped) = int_part.strip_prefix('-') {
-        (true, stripped)
-    } else {
-        (false, int_part)
+        ("", int_part)
     };
 
     if digits.len() <= 3 {
-        return int_part.to_string();
+        return s.to_string();
     }
 
-    let len = digits.len();
-    let first_len = len % 3;
-    let mut chunks = Vec::new();
+    let mut formatted_int = String::with_capacity(int_part.len() + (digits.len() / 3) * sep.len());
+    formatted_int.push_str(prefix);
 
-    if first_len > 0 {
-        chunks.push(&digits[..first_len]);
-    }
-
-    let mut idx = first_len;
-    while idx < len {
-        chunks.push(&digits[idx..idx + 3]);
-        idx += 3;
-    }
-
-    let joined = chunks.join(sep);
-    if is_neg {
-        format!("-{}", joined)
+    let first_group_len = digits.len() % 3;
+    let (first, rest) = if first_group_len == 0 {
+        ("", digits)
     } else {
-        joined
+        digits.split_at(first_group_len)
+    };
+
+    if !first.is_empty() {
+        formatted_int.push_str(first);
+    }
+
+    for (i, chunk) in rest.as_bytes().chunks(3).enumerate() {
+        if !first.is_empty() || i > 0 {
+            formatted_int.push_str(sep);
+        }
+        formatted_int.push_str(std::str::from_utf8(chunk).unwrap());
+    }
+
+    if parts.len() > 1 {
+        format!("{}.{}", formatted_int, parts[1..].join("."))
+    } else {
+        formatted_int
     }
 }
 
-/// Parse a string value into an integer in bytes.
-pub fn parse_bytes_str(val: &str) -> Option<f64> {
-    if let Some(caps) = PARSE_REGEX.captures(val) {
-        let float_str = &caps[1];
-        let unit_str = caps[4].to_lowercase();
-        let float_val: f64 = float_str.parse().ok()?;
-        let unit_mult = match unit_str.as_str() {
-            "kb" => KB,
-            "mb" => MB,
-            "gb" => GB,
-            "tb" => TB,
-            "pb" => PB,
-            _ => B,
-        };
-        Some((float_val * unit_mult).floor())
-    } else {
-        let float_val = js_parse_int(val)?;
-        Some((float_val * B).floor())
-    }
-}
-
-/// Format the given value in bytes into a string.
-pub fn format_bytes(value: f64, options: Option<&FormatOptions>) -> Option<String> {
+pub fn format_bytes(value: f64, options: Option<FormatOptions>) -> Option<String> {
     if !value.is_finite() {
         return None;
     }
 
+    let opts = options.unwrap_or_default();
     let mag = value.abs();
 
-    let thousands_separator = options
-        .and_then(|o| o.thousands_separator.as_deref())
-        .unwrap_or("");
-    let unit_separator = options
-        .and_then(|o| o.unit_separator.as_deref())
-        .unwrap_or("");
-    let decimal_places = options
-        .and_then(|o| o.decimal_places)
-        .unwrap_or(2);
-    let fixed_decimals = options
-        .and_then(|o| o.fixed_decimals)
-        .unwrap_or(false);
-    let input_unit = options
-        .and_then(|o| o.unit.as_deref())
-        .unwrap_or("");
+    let thousands_separator = opts.thousands_separator.unwrap_or_default();
+    let unit_separator = opts.unit_separator.unwrap_or_default();
+    let decimal_places = opts.decimal_places.unwrap_or(2);
+    let fixed_decimals = opts.fixed_decimals.unwrap_or(false);
+    let raw_unit = opts.unit.unwrap_or_default();
 
-    let unit_lower = input_unit.to_lowercase();
-
-    let (unit_str, mult) = match unit_lower.as_str() {
-        "b" => (if input_unit.is_empty() { "B".to_string() } else { input_unit.to_string() }, B),
-        "kb" => (if input_unit.is_empty() { "KB".to_string() } else { input_unit.to_string() }, KB),
-        "mb" => (if input_unit.is_empty() { "MB".to_string() } else { input_unit.to_string() }, MB),
-        "gb" => (if input_unit.is_empty() { "GB".to_string() } else { input_unit.to_string() }, GB),
-        "tb" => (if input_unit.is_empty() { "TB".to_string() } else { input_unit.to_string() }, TB),
-        "pb" => (if input_unit.is_empty() { "PB".to_string() } else { input_unit.to_string() }, PB),
-        _ => {
-            if mag >= PB {
-                ("PB".to_string(), PB)
-            } else if mag >= TB {
-                ("TB".to_string(), TB)
-            } else if mag >= GB {
-                ("GB".to_string(), GB)
-            } else if mag >= MB {
-                ("MB".to_string(), MB)
-            } else if mag >= KB {
-                ("KB".to_string(), KB)
+    let (unit, bytes_per_unit) = match get_unit_map_entry(&raw_unit) {
+        Some((_, u_bytes)) => (raw_unit, u_bytes),
+        None => {
+            if mag >= MAP_PB {
+                ("PB".to_string(), MAP_PB)
+            } else if mag >= MAP_TB {
+                ("TB".to_string(), MAP_TB)
+            } else if mag >= MAP_GB {
+                ("GB".to_string(), MAP_GB)
+            } else if mag >= MAP_MB {
+                ("MB".to_string(), MAP_MB)
+            } else if mag >= MAP_KB {
+                ("KB".to_string(), MAP_KB)
             } else {
-                ("B".to_string(), B)
+                ("B".to_string(), MAP_B)
             }
         }
     };
 
-    let val = value / mult;
-    let formatted_val = format!("{:.1$}", val, decimal_places as usize);
-
-    let mut str_val = formatted_val;
+    let val = value / bytes_per_unit;
+    let mut str_val = format!("{:.1$}", val, decimal_places as usize);
 
     if !fixed_decimals {
-        if str_val.contains('.') {
-            let mut trimmed = str_val.trim_end_matches('0');
-            if trimmed.ends_with('.') {
-                trimmed = &trimmed[..trimmed.len() - 1];
-            }
-            str_val = trimmed.to_string();
-        }
+        let re = FORMAT_DECIMALS_REGEXP
+            .get_or_init(|| Regex::new(r"(?:\.0*|(\.[^0]+)0+)$").unwrap());
+        str_val = re.replace(&str_val, "$1").to_string();
     }
 
     if !thousands_separator.is_empty() {
-        let parts: Vec<&str> = str_val.split('.').collect();
-        let int_part = parts[0];
-        let dec_part = if parts.len() > 1 { parts[1] } else { "" };
-
-        let formatted_int = format_thousands(int_part, thousands_separator);
-        if !dec_part.is_empty() {
-            str_val = format!("{}.{}", formatted_int, dec_part);
-        } else {
-            str_val = formatted_int;
-        }
+        str_val = apply_thousands_separator(&str_val, &thousands_separator);
     }
 
-    Some(format!("{}{}{}", str_val, unit_separator, unit_str))
+    Some(format!("{}{}{}", str_val, unit_separator, unit))
 }
 
-// -----------------------------------------------------------------------------
-// N-API Exports for Node.js
-// -----------------------------------------------------------------------------
+// N-API Bridge Exports
 
-fn parse_format_options(obj: &Object) -> FormatOptions {
-    let decimal_places = if let Ok(true) = obj.has_named_property("decimalPlaces") {
-        if let Ok(val) = obj.get_named_property::<Unknown>("decimalPlaces") {
-            if let Ok(ValueType::Number) = val.get_type() {
-                val.coerce_to_number().ok().and_then(|n| n.get_uint32().ok())
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+#[cfg(feature = "napi-bindings")]
+#[napi(object)]
+#[derive(Default)]
+pub struct NapiFormatOptions {
+    pub decimal_places: Option<u32>,
+    pub fixed_decimals: Option<bool>,
+    pub thousands_separator: Option<Either<String, ()>>,
+    pub unit: Option<Either<String, ()>>,
+    pub unit_separator: Option<Either<String, ()>>,
+}
 
-    let fixed_decimals = if let Ok(true) = obj.has_named_property("fixedDecimals") {
-        if let Ok(val) = obj.get_named_property::<Unknown>("fixedDecimals") {
-            if let Ok(ValueType::Boolean) = val.get_type() {
-                val.coerce_to_bool().ok().map(|b| b.get_value().unwrap_or(false))
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    let thousands_separator = if let Ok(true) = obj.has_named_property("thousandsSeparator") {
-        if let Ok(val) = obj.get_named_property::<Unknown>("thousandsSeparator") {
-            if let Ok(ValueType::String) = val.get_type() {
-                val.coerce_to_string()
-                    .ok()
-                    .and_then(|s| s.into_utf8().ok())
-                    .and_then(|u| u.into_owned().ok())
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    let unit = if let Ok(true) = obj.has_named_property("unit") {
-        if let Ok(val) = obj.get_named_property::<Unknown>("unit") {
-            if let Ok(ValueType::String) = val.get_type() {
-                val.coerce_to_string()
-                    .ok()
-                    .and_then(|s| s.into_utf8().ok())
-                    .and_then(|u| u.into_owned().ok())
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    let unit_separator = if let Ok(true) = obj.has_named_property("unitSeparator") {
-        if let Ok(val) = obj.get_named_property::<Unknown>("unitSeparator") {
-            if let Ok(ValueType::String) = val.get_type() {
-                val.coerce_to_string()
-                    .ok()
-                    .and_then(|s| s.into_utf8().ok())
-                    .and_then(|u| u.into_owned().ok())
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    FormatOptions {
-        decimal_places,
-        fixed_decimals,
-        thousands_separator,
-        unit,
-        unit_separator,
+#[cfg(feature = "napi-bindings")]
+fn extract_string(opt: Option<Either<String, ()>>) -> Option<String> {
+    match opt {
+        Some(Either::A(s)) => Some(s),
+        _ => None,
     }
 }
 
-#[napi]
-pub fn bytes(env: Env, val: Option<Unknown>, options: Option<Object>) -> Result<Option<Unknown>> {
-    let u = match val {
-        Some(u) => u,
-        None => return Ok(None),
-    };
-    let value_type = u.get_type()?;
-    match value_type {
-        ValueType::String => {
-            let str_val = u.coerce_to_string()?.into_utf8()?.into_owned()?;
-            match parse_bytes_str(&str_val) {
-                Some(n) => Ok(Some(env.create_double(n)?.into_unknown())),
-                None => Ok(None),
-            }
-        }
+#[cfg(feature = "napi-bindings")]
+#[napi(js_name = "parse")]
+pub fn napi_parse(val: Unknown) -> Result<Option<f64>> {
+    match val.get_type()? {
         ValueType::Number => {
-            let num = u.coerce_to_number()?.get_double()?;
-            let opts = options.map(|obj| parse_format_options(&obj));
-            match format_bytes(num, opts.as_ref()) {
-                Some(s) => Ok(Some(env.create_string(&s)?.into_unknown())),
-                None => Ok(None),
-            }
+            let num = val.coerce_to_number()?.get_double()?;
+            Ok(parse_number(num))
+        }
+        ValueType::String => {
+            let s = val.coerce_to_string()?.into_utf8()?.into_owned()?;
+            Ok(parse_string(&s))
         }
         _ => Ok(None),
     }
 }
 
-#[napi]
-pub fn parse(val: Option<Unknown>) -> Result<Option<f64>> {
-    let u = match val {
-        Some(u) => u,
-        None => return Ok(None),
-    };
-    let value_type = u.get_type()?;
-    match value_type {
-        ValueType::Number => {
-            let num = u.coerce_to_number()?.get_double()?;
-            if num.is_nan() {
-                Ok(None)
-            } else {
-                Ok(Some(num))
-            }
-        }
-        ValueType::String => {
-            let str_val = u.coerce_to_string()?.into_utf8()?.into_owned()?;
-            Ok(parse_bytes_str(&str_val))
-        }
-        _ => Ok(None),
-    }
-}
-
-#[napi]
-pub fn format(val: Option<Unknown>, options: Option<Object>) -> Result<Option<String>> {
-    let u = match val {
-        Some(u) => u,
-        None => return Ok(None),
-    };
-    let value_type = u.get_type()?;
-    if value_type != ValueType::Number {
+#[cfg(feature = "napi-bindings")]
+#[napi(js_name = "format")]
+pub fn napi_format(
+    val: Unknown,
+    options: Option<NapiFormatOptions>,
+) -> Result<Option<String>> {
+    if val.get_type()? != ValueType::Number {
         return Ok(None);
     }
-    let num = u.coerce_to_number()?.get_double()?;
-    let opts = options.map(|obj| parse_format_options(&obj));
-    Ok(format_bytes(num, opts.as_ref()))
+    let num = val.coerce_to_number()?.get_double()?;
+    let opts = options.map(|o| FormatOptions {
+        decimal_places: o.decimal_places,
+        fixed_decimals: o.fixed_decimals,
+        thousands_separator: extract_string(o.thousands_separator),
+        unit: extract_string(o.unit),
+        unit_separator: extract_string(o.unit_separator),
+    });
+    Ok(format_bytes(num, opts))
+}
+
+#[cfg(feature = "napi-bindings")]
+#[napi(js_name = "bytes")]
+pub fn napi_bytes(
+    val: Unknown,
+    options: Option<NapiFormatOptions>,
+) -> Result<Option<Either<f64, String>>> {
+    match val.get_type()? {
+        ValueType::String => {
+            let s = val.coerce_to_string()?.into_utf8()?.into_owned()?;
+            match parse_string(&s) {
+                Some(n) => Ok(Some(Either::A(n))),
+                None => Ok(None),
+            }
+        }
+        ValueType::Number => {
+            let num = val.coerce_to_number()?.get_double()?;
+            let opts = options.map(|o| FormatOptions {
+                decimal_places: o.decimal_places,
+                fixed_decimals: o.fixed_decimals,
+                thousands_separator: extract_string(o.thousands_separator),
+                unit: extract_string(o.unit),
+                unit_separator: extract_string(o.unit_separator),
+            });
+            match format_bytes(num, opts) {
+                Some(s) => Ok(Some(Either::B(s))),
+                None => Ok(None),
+            }
+        }
+        _ => Ok(None),
+    }
 }
 
 #[cfg(test)]
@@ -368,82 +288,39 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_parse_raw_numbers() {
+        assert_eq!(parse_number(0.0), Some(0.0));
+        assert_eq!(parse_number(-1.0), Some(-1.0));
+        assert_eq!(parse_number(1.0), Some(1.0));
+        assert_eq!(parse_number(10.5), Some(10.5));
+        assert_eq!(parse_number(f64::NAN), None);
+    }
+
+    #[test]
+    fn test_parse_units() {
+        assert_eq!(parse_string("1kb"), Some(1024.0));
+        assert_eq!(parse_string("1KB"), Some(1024.0));
+        assert_eq!(parse_string("0.5kb"), Some(512.0));
+        assert_eq!(parse_string("1.5TB"), Some(1.5 * 1024.0 * 1024.0 * 1024.0 * 1024.0));
+        assert_eq!(parse_string("1.1b"), Some(1.0));
+        assert_eq!(parse_string("1.0001kb"), Some(1024.0));
+        assert_eq!(parse_string("0x11"), Some(0.0));
+        assert_eq!(parse_string("foobar"), None);
+    }
+
+    #[test]
     fn test_format() {
-        assert_eq!(format_bytes(0.0, None).unwrap().to_lowercase(), "0b");
-        assert_eq!(format_bytes(100.0, None).unwrap().to_lowercase(), "100b");
-        assert_eq!(format_bytes(-100.0, None).unwrap().to_lowercase(), "-100b");
-        assert_eq!(format_bytes(1024.0, None).unwrap().to_lowercase(), "1kb");
-        assert_eq!(format_bytes(-1024.0, None).unwrap().to_lowercase(), "-1kb");
-        assert_eq!(format_bytes(1048576.0, None).unwrap().to_lowercase(), "1mb");
-        assert_eq!(format_bytes(1073741824.0, None).unwrap().to_lowercase(), "1gb");
-        assert_eq!(format_bytes(1099511627776.0, None).unwrap().to_lowercase(), "1tb");
-        assert_eq!(format_bytes(1125899906842624.0, None).unwrap().to_lowercase(), "1pb");
-
-        // Standard case
-        assert_eq!(format_bytes(10.0, None).unwrap(), "10B");
-        assert_eq!(format_bytes(1024.0, None).unwrap(), "1KB");
-        assert_eq!(format_bytes(1048576.0, None).unwrap(), "1MB");
-
-        // Options
-        let opts = FormatOptions {
-            thousands_separator: Some(" ".to_string()),
-            ..Default::default()
-        };
-        assert_eq!(format_bytes(1000.0, Some(&opts)).unwrap(), "1 000B");
-
-        let opts = FormatOptions {
-            unit_separator: Some(" ".to_string()),
-            ..Default::default()
-        };
-        assert_eq!(format_bytes(1024.0, Some(&opts)).unwrap(), "1 KB");
-
-        let opts = FormatOptions {
-            decimal_places: Some(3),
-            fixed_decimals: Some(true),
-            ..Default::default()
-        };
-        assert_eq!(format_bytes(1024.0, Some(&opts)).unwrap().to_lowercase(), "1.000kb");
-    }
-
-    #[test]
-    fn test_parse() {
-        assert_eq!(parse_bytes_str("1kb"), Some(1024.0));
-        assert_eq!(parse_bytes_str("1KB"), Some(1024.0));
-        assert_eq!(parse_bytes_str("0.5kb"), Some(512.0));
-        assert_eq!(parse_bytes_str("1.5kb"), Some(1536.0));
-        assert_eq!(parse_bytes_str("1mb"), Some(1048576.0));
-        assert_eq!(parse_bytes_str("1gb"), Some(1073741824.0));
-        assert_eq!(parse_bytes_str("1tb"), Some(1099511627776.0));
-        assert_eq!(parse_bytes_str("1pb"), Some(1125899906842624.0));
-        assert_eq!(parse_bytes_str("0"), Some(0.0));
-        assert_eq!(parse_bytes_str("-1"), Some(-1.0));
-        assert_eq!(parse_bytes_str("1024"), Some(1024.0));
-        assert_eq!(parse_bytes_str("0x11"), Some(0.0));
-        assert_eq!(parse_bytes_str("foobar"), None);
-        assert_eq!(parse_bytes_str("1.1b"), Some(1.0));
-        assert_eq!(parse_bytes_str("1.0001kb"), Some(1024.0));
-        assert_eq!(parse_bytes_str("1 TB"), Some(1099511627776.0));
-    }
-
-    #[test]
-    fn bench_performance() {
-        use std::time::Instant;
-
-        let iterations = 500_000;
-        let start = Instant::now();
-        for _ in 0..iterations {
-            let _ = parse_bytes_str("1.5GB");
-            let _ = format_bytes(1610612736.0, None);
-        }
-        let elapsed = start.elapsed();
-        let total_ops = iterations * 2;
-        let ns_per_op = elapsed.as_nanos() / total_ops as u128;
-        println!(
-            "\n⚡ [RUST BENCHMARK] Executed {} operations in {:?} (~{} ns/op, {:.2} million ops/sec)",
-            total_ops,
-            elapsed,
-            ns_per_op,
-            (total_ops as f64 / elapsed.as_secs_f64()) / 1_000_000.0
+        assert_eq!(format_bytes(0.0, None), Some("0B".to_string()));
+        assert_eq!(format_bytes(1024.0, None), Some("1KB".to_string()));
+        assert_eq!(
+            format_bytes(
+                1000.0,
+                Some(FormatOptions {
+                    thousands_separator: Some(" ".to_string()),
+                    ..Default::default()
+                })
+            ),
+            Some("1 000B".to_string())
         );
     }
 }
