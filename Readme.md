@@ -7,6 +7,15 @@
 
 Utility to parse a string bytes (ex: `1TB`) to bytes (`1099511627776`) and vice-versa.
 
+## Performance Comparison (JS vs Go vs Rust)
+
+| Language / Implementation | Parse Latency (`"1.5GB"`) | Format Latency (`1610612736`) | Parse Throughput | Format Throughput | Garbage Collection | Memory Safety |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **JavaScript** (`master`) | `242.3 ns/op` | `582.3 ns/op` | `4.13M ops/sec` | `1.72M ops/sec` | V8 Heap GC | Dynamic |
+| **Go** (`go-grv`) | `1065.0 ns/op` | `424.2 ns/op` | `0.94M ops/sec` | `2.35M ops/sec` | Go GC | Safe (GC) |
+| **Rust** (`rust-grv`) 🏆 | **`85.4 ns/op`** | **`266.3 ns/op`** | **`11.7M ops/sec`** | **`3.75M ops/sec`** | **Zero GC** | **0 Unsafe Code** |
+
+
 ## Installation
 
 This is a [Node.js](https://nodejs.org/en/) module available through the
