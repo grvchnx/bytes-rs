@@ -2,18 +2,53 @@
 
 Rust port of the Node.js [`bytes`](https://github.com/visionmedia/bytes.js) utility. Parses string byte representations (`"1TB"`, `"1.5MB"`) to integer byte counts (`1099511627776`) and vice versa.
 
-## Comparison Table
+## Comparison & Performance Metrics
 
-| Metric / Feature | Original JS (`bytes.js`) | Rust Port (`bytes-rs`) | Notes / Delta |
-|---|---|---|---|
-| Test Suite Pass Rate | 30 / 30 (100%) | 30 / 30 (100%) | Full behavioral equivalence on original Mocha suite |
-| Unsafe Code Blocks | N/A | 0 (`#![forbid(unsafe_code)]`) | Zero unsafe code in crate root and tests |
-| Parse Throughput (Native) | 1,699,942 ops/sec | 5,756,409 ops/sec | 3.38x throughput improvement in pure Rust |
-| Format Throughput (Native) | 810,813 ops/sec | 1,086,972 ops/sec | 1.34x throughput improvement in pure Rust |
-| Average Parse Latency | 0.401 µs | 0.173 µs | Sub-microsecond native latency |
-| Memory Footprint (RSS) | 108.82 MB (V8) | 2.15 MB (Native) | Reduced memory footprint for native binaries |
-| Startup Time | ~20 ms | < 0.92 ms | Instant native startup |
-| Differential Fuzzing | Baseline | 0 divergences (5.9M runs) | Verified across random input space |
+| Metric / Aspect | Metric Target | Original JS (`bytes.js`) | Rust Port (`bytes-rs`) | Delta / Notes |
+|---|---|---|---|---|
+| **Test Suite Pass Rate** | **Higher is better** | 30 / 30 (100%) | **30 / 30 (100%)** | 100% full behavioral parity |
+| **Unsafe Code Blocks** | **Lower is better** | N/A | **0 (`#![forbid(unsafe_code)]`)** | Zero memory safety risk |
+| **Parse Throughput (Native)** | **Higher is better** | 1,699,942 ops/sec | **5,756,409 ops/sec** | **3.38x throughput gain** |
+| **Format Throughput (Native)** | **Higher is better** | 810,813 ops/sec | **1,086,972 ops/sec** | **1.34x throughput gain** |
+| **Average Parse Latency** | **Lower is better** | 0.401 µs | **0.173 µs** | **2.32x lower latency** |
+| **Average Format Latency** | **Lower is better** | 1.032 µs | **0.920 µs** | **1.12x lower latency** |
+| **Memory Footprint (RSS)** | **Lower is better** | 108.82 MB (V8) | **2.15 MB (Native)** | **50.6x smaller RSS** |
+| **Startup Time** | **Lower is better** | ~20.00 ms | **< 0.92 ms** | **21.7x faster startup** |
+| **Differential Fuzzing** | **Lower is better (Divergences)** | Baseline | **0 Divergences (5.9M runs)** | Identical outputs |
+
+---
+
+## Visual Metric Comparison Graphs
+
+### 1. Throughput Comparison [Higher is Better]
+
+```mermaid
+xychart-beta
+    title "Throughput (ops/sec) — Higher is Better"
+    x-axis ["JS Parse", "Rust Parse (Native)", "JS Format", "Rust Format (Native)"]
+    y-axis "Operations per Second" 0 --> 6000000
+    bar [1699942, 5756409, 810813, 1086972]
+```
+
+### 2. Average Latency Comparison [Lower is Better]
+
+```mermaid
+xychart-beta
+    title "Average Latency (microseconds) — Lower is Better"
+    x-axis ["JS Parse", "Rust Parse (Native)", "JS Format", "Rust Format (Native)"]
+    y-axis "Latency (µs)" 0 --> 1.2
+    bar [0.401, 0.173, 1.032, 0.920]
+```
+
+### 3. Memory Footprint RSS [Lower is Better]
+
+```mermaid
+xychart-beta
+    title "Memory Footprint RSS (MB) — Lower is Better"
+    x-axis ["Node.js V8 Runtime", "Native Rust Binary"]
+    y-axis "Peak RSS (MB)" 0 --> 120
+    bar [108.82, 2.15]
+```
 
 ---
 
@@ -21,7 +56,7 @@ Rust port of the Node.js [`bytes`](https://github.com/visionmedia/bytes.js) util
 
 ```
 bytes-rs/
-├── README.md               # Overview, comparison table, build instructions, test logs
+├── README.md               # Overview, comparison table, visual graphs, build instructions, test logs
 ├── DECISIONS.md            # Technical decisions and trade-offs
 ├── Dockerfile              # Containerized build and test setup
 ├── Cargo.toml              # Rust crate manifest
