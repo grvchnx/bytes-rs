@@ -202,17 +202,9 @@ pub fn format_bytes(value: f64, options: Option<FormatOptions>) -> Option<String
 pub struct NapiFormatOptions {
     pub decimal_places: Option<u32>,
     pub fixed_decimals: Option<bool>,
-    pub thousands_separator: Option<Either<String, ()>>,
-    pub unit: Option<Either<String, ()>>,
-    pub unit_separator: Option<Either<String, ()>>,
-}
-
-#[cfg(feature = "napi-bindings")]
-fn extract_string(opt: Option<Either<String, ()>>) -> Option<String> {
-    match opt {
-        Some(Either::A(s)) => Some(s),
-        _ => None,
-    }
+    pub thousands_separator: Option<String>,
+    pub unit: Option<String>,
+    pub unit_separator: Option<String>,
 }
 
 #[cfg(feature = "napi-bindings")]
@@ -244,9 +236,9 @@ pub fn napi_format(
     let opts = options.map(|o| FormatOptions {
         decimal_places: o.decimal_places,
         fixed_decimals: o.fixed_decimals,
-        thousands_separator: extract_string(o.thousands_separator),
-        unit: extract_string(o.unit),
-        unit_separator: extract_string(o.unit_separator),
+        thousands_separator: o.thousands_separator,
+        unit: o.unit,
+        unit_separator: o.unit_separator,
     });
     Ok(format_bytes(num, opts))
 }
@@ -270,9 +262,9 @@ pub fn napi_bytes(
             let opts = options.map(|o| FormatOptions {
                 decimal_places: o.decimal_places,
                 fixed_decimals: o.fixed_decimals,
-                thousands_separator: extract_string(o.thousands_separator),
-                unit: extract_string(o.unit),
-                unit_separator: extract_string(o.unit_separator),
+                thousands_separator: o.thousands_separator,
+                unit: o.unit,
+                unit_separator: o.unit_separator,
             });
             match format_bytes(num, opts) {
                 Some(s) => Ok(Some(Either::B(s))),

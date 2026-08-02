@@ -1,0 +1,8 @@
+[port]
+track = "rust"
+source_url = "https://github.com/visionmedia/bytes.js"
+kickoff_hash = "679c8d3b87910901e6ca28e3bb31e5f8f53702a0"
+language = "rust"
+original_language = "javascript"
+test_parity = "100%"
+unsafe_code_blocks = 0

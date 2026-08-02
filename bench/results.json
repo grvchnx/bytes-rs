@@ -1,0 +1,45 @@
+{
+  "timestamp": "2026-08-02T17:36:46.258Z",
+  "environment": {
+    "nodeVersion": "v25.9.0",
+    "platform": "linux",
+    "arch": "x64"
+  },
+  "startupTimeMs": 0.924,
+  "memory": {
+    "rssMb": 108.82,
+    "heapUsedMb": 34.93
+  },
+  "benchmarks": {
+    "parse": {
+      "javascript": {
+        "opsPerSec": 1699942,
+        "p50_us": 0.401,
+        "p95_us": 0.681,
+        "p99_us": 1.162
+      },
+      "rust_napi": {
+        "opsPerSec": 1384225,
+        "p50_us": 0.631,
+        "p95_us": 0.762,
+        "p99_us": 1.002
+      },
+      "speedup_factor": 0.81
+    },
+    "format": {
+      "javascript": {
+        "opsPerSec": 810813,
+        "p50_us": 1.032,
+        "p95_us": 1.563,
+        "p99_us": 3.006
+      },
+      "rust_napi": {
+        "opsPerSec": 644478,
+        "p50_us": 1.433,
+        "p95_us": 2.004,
+        "p99_us": 2.505
+      },
+      "speedup_factor": 0.79
+    }
+  }
+}
